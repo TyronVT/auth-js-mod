@@ -507,6 +507,75 @@ export default class GoTrueClient {
     }
   }
 
+  async signUpWithoutChangingCredentials(credentials: SignUpWithPasswordCredentials): Promise<AuthResponse> {
+    try {
+      let res: AuthResponse
+      if ('email' in credentials) {
+        const { email, password, options } = credentials
+        let codeChallenge: string | null = null
+        let codeChallengeMethod: string | null = null
+        if (this.flowType === 'pkce') {
+          ;[codeChallenge, codeChallengeMethod] = await getCodeChallengeAndMethod(
+            this.storage,
+            this.storageKey
+          )
+        }
+        res = await _request(this.fetch, 'POST', `${this.url}/signup`, {
+          headers: this.headers,
+          redirectTo: options?.emailRedirectTo,
+          body: {
+            email,
+            password,
+            data: options?.data ?? {},
+            gotrue_meta_security: { captcha_token: options?.captchaToken },
+            code_challenge: codeChallenge,
+            code_challenge_method: codeChallengeMethod,
+          },
+          xform: _sessionResponse,
+        })
+      } else if ('phone' in credentials) {
+        const { phone, password, options } = credentials
+        res = await _request(this.fetch, 'POST', `${this.url}/signup`, {
+          headers: this.headers,
+          body: {
+            phone,
+            password,
+            data: options?.data ?? {},
+            channel: options?.channel ?? 'sms',
+            gotrue_meta_security: { captcha_token: options?.captchaToken },
+          },
+          xform: _sessionResponse,
+        })
+      } else {
+        throw new AuthInvalidCredentialsError(
+          'You must provide either an email or phone number and a password'
+        )
+      }
+
+      const { data, error } = res
+
+      if (error || !data) {
+        return { data: { user: null, session: null }, error: error }
+      }
+
+      const session: Session | null = data.session
+      const user: User | null = data.user
+
+      if (data.session) {
+        //await this._saveSession(data.session)
+        await this._notifyAllSubscribers('SIGNED_IN', session)
+      }
+
+      return { data: { user, session }, error: null }
+    } catch (error) {
+      if (isAuthError(error)) {
+        return { data: { user: null, session: null }, error }
+      }
+
+      throw error
+    }
+  }
+
   /**
    * Log in an existing user with an email and password or phone and password.
    *
